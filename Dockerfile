@@ -12,10 +12,20 @@ RUN apt-get update && apt-get install -y \
     libcurl4-openssl-dev \
     libssl-dev \
     libxml2-dev \
+    libsodium-dev \
+    zlib1g-dev \
+    make \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Install required R packages
-RUN R -e "install.packages(c('plumber', 'dplyr', 'readr', 'purrr', 'lubridate', 'tibble', 'httr', 'jsonlite', 'htmltools', 'nasapower'), repos='https://cran.rstudio.com/')"
+# Install required R packages — stop_on_missing ensures a failed install
+# fails the whole build clearly, instead of silently continuing and only
+# surfacing the problem later when the app crashes at runtime.
+RUN R -e "\
+  pkgs <- c('plumber', 'dplyr', 'readr', 'purrr', 'lubridate', 'tibble', 'httr', 'jsonlite', 'htmltools', 'nasapower'); \
+  install.packages(pkgs, repos='https://cran.rstudio.com/'); \
+  missing <- pkgs[!sapply(pkgs, requireNamespace, quietly = TRUE)]; \
+  if (length(missing) > 0) stop('Failed to install: ', paste(missing, collapse=', '))"
 
 # Copy all project files into the container
 WORKDIR /app
