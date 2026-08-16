@@ -101,11 +101,14 @@ function() {
 #* @param lga The LGA name (must match exactly — see /lgas for valid names)
 #* @param crop One of: maize, rice, millet, cassava, cowpea
 #* @param year Optional. Defaults to current year.
+#* @param lang Optional. "en" or "fr" (default "en"). "yo"/"ha" exist in draft
+#*        form pending validation and fall back to English with a note.
 #* @get /forecast
-function(state, lga, crop, year = as.character(format(Sys.Date(), "%Y"))) {
+function(state, lga, crop, year = as.character(format(Sys.Date(), "%Y")), lang = "en") {
   state <- trimws(state)
   lga <- trimws(lga)
   crop <- trimws(crop)
+  lang <- trimws(lang)
   year <- as.integer(year)
   current_year <- as.integer(format(Sys.Date(), "%Y"))
   is_current_year <- (year == current_year)
@@ -163,7 +166,7 @@ function(state, lga, crop, year = as.character(format(Sys.Date(), "%Y"))) {
     normal_onset_window = normal_window
   )
 
-  advisory <- get_advisory(crop = crop, condition = condition)
+  advisory <- get_advisory(crop = crop, condition = condition, language = lang)
 
   # Season-long variability note — built entirely from the baseline stats
   # we already have (no new data pull needed). This is a general risk
@@ -209,7 +212,10 @@ function(state, lga, crop, year = as.character(format(Sys.Date(), "%Y"))) {
     season_length_days = if (is.na(cessation)) NA else as.integer(cessation - onset),
     estimated_season_length_days = if (is.na(estimated_season_length)) NA else estimated_season_length,
     condition = condition,
+    condition_label = advisory$condition_label,
     confidence = advisory$confidence,
+    language = advisory$language,
+    language_note = advisory$language_note,
     advisory_text = advisory$advisory_text,
     variability_note = variability_note,
     baseline_used = !is.null(normal_window)
