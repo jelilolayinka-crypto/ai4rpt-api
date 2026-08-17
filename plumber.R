@@ -247,8 +247,8 @@ function(res, text, lang = "en") {
     )))
   }
 
-  key <- Sys.getenv("AZURE_SPEECH_KEY")
-  region <- Sys.getenv("AZURE_SPEECH_REGION")
+  key <- trimws(Sys.getenv("AZURE_SPEECH_KEY"))
+  region <- trimws(Sys.getenv("AZURE_SPEECH_REGION"))
   if (key == "" || region == "") {
     return(json_error(500, "Server missing AZURE_SPEECH_KEY / AZURE_SPEECH_REGION environment variables."))
   }
@@ -264,20 +264,28 @@ function(res, text, lang = "en") {
     locale, voice, htmltools::htmlEscape(text)
   )
 
+  request_url <- sprintf("https://%s.tts.speech.microsoft.com/cognitiveservices/v1", region)
+
   resp <- POST(
-    url = sprintf("https://%s.tts.speech.microsoft.com/cognitiveservices/v1", region),
+    url = request_url,
     add_headers(
       "Ocp-Apim-Subscription-Key" = key,
       "Content-Type" = "application/ssml+xml",
       "X-Microsoft-OutputFormat" = "audio-16khz-48kbitrate-mono-mp3"
     ),
-    body = ssml
+    body = charToRaw(enc2utf8(ssml))
   )
 
   if (status_code(resp) != 200) {
+    # TEMPORARY DIAGNOSTIC: exposing the exact request details (minus the
+    # key itself) so we can see precisely what was sent, since Azure's
+    # error body has been empty so far. Remove once root cause is found.
     return(json_error(502, paste0(
-      "Azure TTS request failed (HTTP ", status_code(resp), "): ",
-      content(resp, "text", encoding = "UTF-8")
+      "Azure TTS request failed (HTTP ", status_code(resp), "). ",
+      "URL: ", request_url, ". ",
+      "Region (length ", nchar(region), "): '", region, "'. ",
+      "Key present: ", nchar(key) > 0, " (length ", nchar(key), "). ",
+      "Body: ", content(resp, "text", encoding = "UTF-8")
     )))
   }
 
