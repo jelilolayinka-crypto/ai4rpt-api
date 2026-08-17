@@ -272,7 +272,10 @@ function(res, text, lang = "en") {
   )
 
   if (status_code(resp) != 200) {
-    return(json_error(502, paste0("Azure TTS request failed: ", content(resp, "text"))))
+    return(json_error(502, paste0(
+      "Azure TTS request failed (HTTP ", status_code(resp), "): ",
+      content(resp, "text", encoding = "UTF-8")
+    )))
   }
 
   res$serializer <- plumber::serializer_content_type("audio/mpeg")
