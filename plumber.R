@@ -253,8 +253,11 @@ function(res, text, lang = "en") {
     return(json_error(500, "Server missing AZURE_SPEECH_KEY / AZURE_SPEECH_REGION environment variables."))
   }
 
-  voice <- if (lang == "en") "en-NG-EzinneNeural" else "fr-FR-DeniseNeural"
-  locale <- if (lang == "en") "en-NG" else "fr-FR"
+  # TEMPORARY DIAGNOSTIC: swapped en-NG-EzinneNeural -> en-US-JennyNeural to
+  # test whether the 400 error is caused by the Nigerian English voice not
+  # being enabled in this Azure resource's region. Revert once confirmed.
+  voice <- if (lang == "en") "en-US-JennyNeural" else "fr-FR-DeniseNeural"
+  locale <- if (lang == "en") "en-US" else "fr-FR"
 
   ssml <- sprintf(
     '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="%s"><voice name="%s">%s</voice></speak>',
