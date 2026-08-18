@@ -178,21 +178,12 @@ function(state, lga, crop, year = as.character(format(Sys.Date(), "%Y")), lang =
   if (!is.null(BASELINE_WINDOWS) && nrow(baseline_row) == 1) {
     sd_onset <- round(baseline_row$sd_onset_doy[1])
     sd_cessation <- round(baseline_row$sd_cessation_doy[1])
-    n_years <- baseline_row$n_years_used[1]
     if (!is.na(sd_onset) && !is.na(sd_cessation)) {
-      variability_note <- if (lang == "fr") {
-        paste0(
-          "Au cours des ", n_years, " dernières années, le début des pluies pour ce lieu a varié d'environ ",
-          sd_onset, " jours et la cessation d'environ ", sd_cessation,
-          " jours d'une année à l'autre — prévoyez une certaine flexibilité dans le calendrier de plantation et de récolte plutôt que de considérer ces dates comme fixes."
-        )
-      } else {
-        paste0(
-          "Over the last ", n_years, " years, onset for this location has varied by about ",
-          sd_onset, " days and cessation by about ", sd_cessation,
-          " days year to year — build some flexibility into planting and harvest timing rather than treating these dates as fixed."
-        )
-      }
+      variability_note <- paste0(
+        "Over the last ", baseline_row$n_years_used[1], " years, onset for this location has varied by about ",
+        sd_onset, " days and cessation by about ", sd_cessation,
+        " days year to year — build some flexibility into planting and harvest timing rather than treating these dates as fixed."
+      )
     }
   }
 
@@ -268,31 +259,110 @@ function(res, text, lang = "en") {
   voice <- if (lang == "en") "en-US-JennyNeural" else "fr-FR-DeniseNeural"
   locale <- if (lang == "en") "en-US" else "fr-FR"
 
-  ssml <- sprintf(
-    '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="%s"><voice name="%s">%s</voice></speak>',
-    locale, voice, htmltools::htmlEscape(text)
+  # Escape only the characters that are special inside an XML text node,
+  # then construct the same minimal SSML shape used in Microsoft's examples.
+  xml_text <- gsub("&", "&amp;", enc2utf8(text), fixed = TRUE)
+  xml_text <- gsub("<", "&lt;", xml_text, fixed = TRUE)
+  xml_text <- gsub(">", "&gt;", xml_text, fixed = TRUE)
+  ssml <- paste0(
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<speak version="1.0" xml:lang="', locale,
+    '" xmlns="http://www.w3.org/2001/10/synthesis">',
+    '<voice name="', voice, '">', xml_text, '</voice></speak>'
   )
 
-  # Prefer the exact endpoint Azure shows you (set as AZURE_SPEECH_ENDPOINT),
-  # since Foundry/multi-service resources can use a different host than the
-  # classic {region}.tts.speech.microsoft.com pattern this falls back to.
-  custom_endpoint <- trimws(Sys.getenv("AZURE_SPEECH_ENDPOINT"))
-  if (custom_endpoint != "") {
-    custom_endpoint <- sub("/+$", "", custom_endpoint)  # strip trailing slash(es)
-    request_url <- paste0(custom_endpoint, "/cognitiveservices/v1")
-  } else {
-    request_url <- sprintf("https://%s.tts.speech.microsoft.com/cognitiveservices/v1", region)
+  # Step 1: exchange the Foundry/multi-service resource key for a short-lived
+  # regional Speech access token. The key itself is never returned to clients.
+  token_url <- sprintf(
+    "https://%s.api.cognitive.microsoft.com/sts/v1.0/issueToken",
+    region
+  )
+
+  token_resp <- tryCatch(
+    POST(
+      url = token_url,
+      add_headers(
+        "Ocp-Apim-Subscription-Key" = key,
+        "Content-Type" = "application/x-www-form-urlencoded",
+        "Content-Length" = "0"
+      ),
+      body = raw(0)
+    ),
+    error = function(e) list(connection_error = conditionMessage(e))
+  )
+
+  if (!is.null(token_resp$connection_error)) {
+    return(json_error(502, paste0(
+      "Could not connect to Azure token endpoint. URL: ", token_url, ". ",
+      "Error: ", token_resp$connection_error
+    )))
   }
+
+  if (status_code(token_resp) != 200) {
+    return(json_error(502, paste0(
+      "Azure token request failed (HTTP ", status_code(token_resp), "). ",
+      "URL: ", token_url, ". Region: '", region, "'. ",
+      "Key present: ", nchar(key) > 0, " (length ", nchar(key), "). ",
+      "Body: ", content(token_resp, "text", encoding = "UTF-8")
+    )))
+  }
+
+  access_token <- trimws(content(token_resp, "text", encoding = "UTF-8"))
+  if (access_token == "") {
+    return(json_error(502, "Azure token endpoint returned an empty access token."))
+  }
+
+  # Diagnostic preflight: confirm that this token can access Speech voices.
+  # A 200 here proves authentication and Speech-service access independently
+  # of the SSML synthesis request.
+  voices_url <- sprintf(
+    "https://%s.tts.speech.microsoft.com/cognitiveservices/voices/list",
+    region
+  )
+  voices_resp <- tryCatch(
+    GET(
+      url = voices_url,
+      add_headers(
+        "Authorization" = paste("Bearer", access_token),
+        "User-Agent" = "AI4RPT"
+      )
+    ),
+    error = function(e) list(connection_error = conditionMessage(e))
+  )
+
+  if (!is.null(voices_resp$connection_error)) {
+    return(json_error(502, paste0(
+      "Could not connect to Azure voices endpoint. URL: ", voices_url, ". ",
+      "Error: ", voices_resp$connection_error
+    )))
+  }
+
+  if (status_code(voices_resp) != 200) {
+    voices_body <- content(voices_resp, "text", encoding = "UTF-8")
+    return(json_error(502, paste0(
+      "Azure voices check failed (HTTP ", status_code(voices_resp), "). ",
+      "URL: ", voices_url, ". Body: ", substr(voices_body, 1, 500)
+    )))
+  }
+
+  # Step 2: use the access token, rather than the multi-service key directly,
+  # to request synthesized audio from the regional Text-to-Speech endpoint.
+  request_url <- sprintf(
+    "https://%s.tts.speech.microsoft.com/cognitiveservices/v1",
+    region
+  )
 
   resp <- tryCatch(
     POST(
       url = request_url,
       add_headers(
-        "Ocp-Apim-Subscription-Key" = key,
+        "Authorization" = paste("Bearer", access_token),
         "Content-Type" = "application/ssml+xml",
-        "X-Microsoft-OutputFormat" = "audio-16khz-48kbitrate-mono-mp3"
+        "X-Microsoft-OutputFormat" = "audio-24khz-48kbitrate-mono-mp3",
+        "User-Agent" = "AI4RPT"
       ),
-      body = charToRaw(enc2utf8(ssml))
+      body = enc2utf8(ssml),
+      encode = "raw"
     ),
     error = function(e) {
       # Connection-level failure (e.g. DNS resolution failed because the
@@ -310,23 +380,38 @@ function(res, text, lang = "en") {
   }
 
   if (status_code(resp) != 200) {
-    # TEMPORARY DIAGNOSTIC: also capturing response headers, since Azure
-    # sometimes puts the actual error reason in headers (e.g. x-ms-error-code)
-    # rather than the body, which has been empty every time so far.
-    resp_headers <- headers(resp)
-    relevant_headers <- resp_headers[grepl("^x-ms|error|content-type", names(resp_headers), ignore.case = TRUE)]
-    headers_text <- if (length(relevant_headers) > 0) {
-      paste(names(relevant_headers), unlist(relevant_headers), sep = ": ", collapse = " | ")
+    response_headers <- headers(resp)
+    diagnostic_header_names <- c(
+      "content-type", "x-microsoft-requestid", "x-requestid",
+      "apim-request-id", "x-ms-region", "date"
+    )
+    diagnostic_header_names <- diagnostic_header_names[
+      diagnostic_header_names %in% names(response_headers)
+    ]
+    diagnostic_headers <- if (length(diagnostic_header_names) == 0) {
+      "none returned"
     } else {
-      "(no relevant headers found)"
+      paste(
+        paste0(
+          diagnostic_header_names, "=",
+          unlist(response_headers[diagnostic_header_names])
+        ),
+        collapse = "; "
+      )
     }
 
+    # TEMPORARY DIAGNOSTIC: exposing the exact request details (minus the
+    # key itself) so we can see precisely what was sent, since Azure's
+    # error body has been empty so far. Remove once root cause is found.
     return(json_error(502, paste0(
       "Azure TTS request failed (HTTP ", status_code(resp), "). ",
       "URL: ", request_url, ". ",
       "Region (length ", nchar(region), "): '", region, "'. ",
-      "Key present: ", nchar(key) > 0, " (length ", nchar(key), "). ",
-      "Headers: ", headers_text, ". ",
+      "Access token acquired: ", nchar(access_token) > 0,
+      " (length ", nchar(access_token), "). ",
+      "Voices check: HTTP 200. ",
+      "SSML byte length: ", nchar(ssml, type = "bytes"), ". ",
+      "Azure response headers: ", diagnostic_headers, ". ",
       "Body: ", content(resp, "text", encoding = "UTF-8")
     )))
   }
