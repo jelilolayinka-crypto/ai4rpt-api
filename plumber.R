@@ -275,15 +275,30 @@ function(res, text, lang = "en") {
     request_url <- sprintf("https://%s.tts.speech.microsoft.com/cognitiveservices/v1", region)
   }
 
-  resp <- POST(
-    url = request_url,
-    add_headers(
-      "Ocp-Apim-Subscription-Key" = key,
-      "Content-Type" = "application/ssml+xml",
-      "X-Microsoft-OutputFormat" = "audio-16khz-48kbitrate-mono-mp3"
+  resp <- tryCatch(
+    POST(
+      url = request_url,
+      add_headers(
+        "Ocp-Apim-Subscription-Key" = key,
+        "Content-Type" = "application/ssml+xml",
+        "X-Microsoft-OutputFormat" = "audio-16khz-48kbitrate-mono-mp3"
+      ),
+      body = charToRaw(enc2utf8(ssml))
     ),
-    body = charToRaw(enc2utf8(ssml))
+    error = function(e) {
+      # Connection-level failure (e.g. DNS resolution failed because the
+      # endpoint hostname doesn't exist) — surface this clearly instead of
+      # letting it crash to a generic, unhelpful 500.
+      list(connection_error = conditionMessage(e))
+    }
   )
+
+  if (!is.null(resp$connection_error)) {
+    return(json_error(502, paste0(
+      "Could not connect to Azure endpoint. URL: ", request_url, ". ",
+      "Error: ", resp$connection_error
+    )))
+  }
 
   if (status_code(resp) != 200) {
     # TEMPORARY DIAGNOSTIC: exposing the exact request details (minus the
