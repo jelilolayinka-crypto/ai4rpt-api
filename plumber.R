@@ -264,22 +264,59 @@ function(res, text, lang = "en") {
     locale, voice, htmltools::htmlEscape(text)
   )
 
-  # Prefer the exact endpoint Azure shows you (set as AZURE_SPEECH_ENDPOINT),
-  # since Foundry/multi-service resources can use a different host than the
-  # classic {region}.tts.speech.microsoft.com pattern this falls back to.
-  custom_endpoint <- trimws(Sys.getenv("AZURE_SPEECH_ENDPOINT"))
-  if (custom_endpoint != "") {
-    custom_endpoint <- sub("/+$", "", custom_endpoint)  # strip trailing slash(es)
-    request_url <- paste0(custom_endpoint, "/cognitiveservices/v1")
-  } else {
-    request_url <- sprintf("https://%s.tts.speech.microsoft.com/cognitiveservices/v1", region)
+  # Step 1: exchange the Foundry/multi-service resource key for a short-lived
+  # regional Speech access token. The key itself is never returned to clients.
+  token_url <- sprintf(
+    "https://%s.api.cognitive.microsoft.com/sts/v1.0/issueToken",
+    region
+  )
+
+  token_resp <- tryCatch(
+    POST(
+      url = token_url,
+      add_headers(
+        "Ocp-Apim-Subscription-Key" = key,
+        "Content-Type" = "application/x-www-form-urlencoded",
+        "Content-Length" = "0"
+      ),
+      body = raw(0)
+    ),
+    error = function(e) list(connection_error = conditionMessage(e))
+  )
+
+  if (!is.null(token_resp$connection_error)) {
+    return(json_error(502, paste0(
+      "Could not connect to Azure token endpoint. URL: ", token_url, ". ",
+      "Error: ", token_resp$connection_error
+    )))
   }
+
+  if (status_code(token_resp) != 200) {
+    return(json_error(502, paste0(
+      "Azure token request failed (HTTP ", status_code(token_resp), "). ",
+      "URL: ", token_url, ". Region: '", region, "'. ",
+      "Key present: ", nchar(key) > 0, " (length ", nchar(key), "). ",
+      "Body: ", content(token_resp, "text", encoding = "UTF-8")
+    )))
+  }
+
+  access_token <- trimws(content(token_resp, "text", encoding = "UTF-8"))
+  if (access_token == "") {
+    return(json_error(502, "Azure token endpoint returned an empty access token."))
+  }
+
+  # Step 2: use the access token, rather than the multi-service key directly,
+  # to request synthesized audio from the regional Text-to-Speech endpoint.
+  request_url <- sprintf(
+    "https://%s.tts.speech.microsoft.com/cognitiveservices/v1",
+    region
+  )
 
   resp <- tryCatch(
     POST(
       url = request_url,
       add_headers(
-        "Ocp-Apim-Subscription-Key" = key,
+        "Authorization" = paste("Bearer", access_token),
         "Content-Type" = "application/ssml+xml",
         "X-Microsoft-OutputFormat" = "audio-16khz-48kbitrate-mono-mp3",
         "User-Agent" = "AI4RPT"
@@ -309,7 +346,8 @@ function(res, text, lang = "en") {
       "Azure TTS request failed (HTTP ", status_code(resp), "). ",
       "URL: ", request_url, ". ",
       "Region (length ", nchar(region), "): '", region, "'. ",
-      "Key present: ", nchar(key) > 0, " (length ", nchar(key), "). ",
+      "Access token acquired: ", nchar(access_token) > 0,
+      " (length ", nchar(access_token), "). ",
       "Body: ", content(resp, "text", encoding = "UTF-8")
     )))
   }
