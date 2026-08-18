@@ -259,9 +259,16 @@ function(res, text, lang = "en") {
   voice <- if (lang == "en") "en-US-JennyNeural" else "fr-FR-DeniseNeural"
   locale <- if (lang == "en") "en-US" else "fr-FR"
 
-  ssml <- sprintf(
-    '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="%s"><voice name="%s">%s</voice></speak>',
-    locale, voice, htmltools::htmlEscape(text)
+  # Escape only the characters that are special inside an XML text node,
+  # then construct the same minimal SSML shape used in Microsoft's examples.
+  xml_text <- gsub("&", "&amp;", enc2utf8(text), fixed = TRUE)
+  xml_text <- gsub("<", "&lt;", xml_text, fixed = TRUE)
+  xml_text <- gsub(">", "&gt;", xml_text, fixed = TRUE)
+  ssml <- paste0(
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<speak version="1.0" xml:lang="', locale,
+    '" xmlns="http://www.w3.org/2001/10/synthesis">',
+    '<voice name="', voice, '">', xml_text, '</voice></speak>'
   )
 
   # Step 1: exchange the Foundry/multi-service resource key for a short-lived
@@ -305,6 +312,39 @@ function(res, text, lang = "en") {
     return(json_error(502, "Azure token endpoint returned an empty access token."))
   }
 
+  # Diagnostic preflight: confirm that this token can access Speech voices.
+  # A 200 here proves authentication and Speech-service access independently
+  # of the SSML synthesis request.
+  voices_url <- sprintf(
+    "https://%s.tts.speech.microsoft.com/cognitiveservices/voices/list",
+    region
+  )
+  voices_resp <- tryCatch(
+    GET(
+      url = voices_url,
+      add_headers(
+        "Authorization" = paste("Bearer", access_token),
+        "User-Agent" = "AI4RPT"
+      )
+    ),
+    error = function(e) list(connection_error = conditionMessage(e))
+  )
+
+  if (!is.null(voices_resp$connection_error)) {
+    return(json_error(502, paste0(
+      "Could not connect to Azure voices endpoint. URL: ", voices_url, ". ",
+      "Error: ", voices_resp$connection_error
+    )))
+  }
+
+  if (status_code(voices_resp) != 200) {
+    voices_body <- content(voices_resp, "text", encoding = "UTF-8")
+    return(json_error(502, paste0(
+      "Azure voices check failed (HTTP ", status_code(voices_resp), "). ",
+      "URL: ", voices_url, ". Body: ", substr(voices_body, 1, 500)
+    )))
+  }
+
   # Step 2: use the access token, rather than the multi-service key directly,
   # to request synthesized audio from the regional Text-to-Speech endpoint.
   request_url <- sprintf(
@@ -321,7 +361,8 @@ function(res, text, lang = "en") {
         "X-Microsoft-OutputFormat" = "audio-16khz-48kbitrate-mono-mp3",
         "User-Agent" = "AI4RPT"
       ),
-      body = charToRaw(enc2utf8(ssml))
+      body = enc2utf8(ssml),
+      encode = "raw"
     ),
     error = function(e) {
       # Connection-level failure (e.g. DNS resolution failed because the
@@ -339,6 +380,26 @@ function(res, text, lang = "en") {
   }
 
   if (status_code(resp) != 200) {
+    response_headers <- headers(resp)
+    diagnostic_header_names <- c(
+      "content-type", "x-microsoft-requestid", "x-requestid",
+      "apim-request-id", "x-ms-region", "date"
+    )
+    diagnostic_header_names <- diagnostic_header_names[
+      diagnostic_header_names %in% names(response_headers)
+    ]
+    diagnostic_headers <- if (length(diagnostic_header_names) == 0) {
+      "none returned"
+    } else {
+      paste(
+        paste0(
+          diagnostic_header_names, "=",
+          unlist(response_headers[diagnostic_header_names])
+        ),
+        collapse = "; "
+      )
+    }
+
     # TEMPORARY DIAGNOSTIC: exposing the exact request details (minus the
     # key itself) so we can see precisely what was sent, since Azure's
     # error body has been empty so far. Remove once root cause is found.
@@ -348,6 +409,9 @@ function(res, text, lang = "en") {
       "Region (length ", nchar(region), "): '", region, "'. ",
       "Access token acquired: ", nchar(access_token) > 0,
       " (length ", nchar(access_token), "). ",
+      "Voices check: HTTP 200. ",
+      "SSML byte length: ", nchar(ssml, type = "bytes"), ". ",
+      "Azure response headers: ", diagnostic_headers, ". ",
       "Body: ", content(resp, "text", encoding = "UTF-8")
     )))
   }
