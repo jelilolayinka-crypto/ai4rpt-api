@@ -358,7 +358,7 @@ function(res, text, lang = "en") {
       add_headers(
         "Authorization" = paste("Bearer", access_token),
         "Content-Type" = "application/ssml+xml",
-        "X-Microsoft-OutputFormat" = "audio-16khz-48kbitrate-mono-mp3",
+        "X-Microsoft-OutputFormat" = "audio-24khz-48kbitrate-mono-mp3",
         "User-Agent" = "AI4RPT"
       ),
       body = enc2utf8(ssml),
