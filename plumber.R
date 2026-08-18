@@ -281,7 +281,8 @@ function(res, text, lang = "en") {
       add_headers(
         "Ocp-Apim-Subscription-Key" = key,
         "Content-Type" = "application/ssml+xml",
-        "X-Microsoft-OutputFormat" = "audio-16khz-48kbitrate-mono-mp3"
+        "X-Microsoft-OutputFormat" = "audio-16khz-48kbitrate-mono-mp3",
+        "User-Agent" = "AI4RPT"
       ),
       body = charToRaw(enc2utf8(ssml))
     ),
