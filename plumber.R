@@ -264,7 +264,16 @@ function(res, text, lang = "en") {
     locale, voice, htmltools::htmlEscape(text)
   )
 
-  request_url <- sprintf("https://%s.tts.speech.microsoft.com/cognitiveservices/v1", region)
+  # Prefer the exact endpoint Azure shows you (set as AZURE_SPEECH_ENDPOINT),
+  # since Foundry/multi-service resources can use a different host than the
+  # classic {region}.tts.speech.microsoft.com pattern this falls back to.
+  custom_endpoint <- trimws(Sys.getenv("AZURE_SPEECH_ENDPOINT"))
+  if (custom_endpoint != "") {
+    custom_endpoint <- sub("/+$", "", custom_endpoint)  # strip trailing slash(es)
+    request_url <- paste0(custom_endpoint, "/cognitiveservices/v1")
+  } else {
+    request_url <- sprintf("https://%s.tts.speech.microsoft.com/cognitiveservices/v1", region)
+  }
 
   resp <- POST(
     url = request_url,
