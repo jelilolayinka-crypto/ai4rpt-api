@@ -54,9 +54,53 @@ fetch_from_open_meteo <- function(lat, lon, target_date) {
     lat, lon, FORECAST_HORIZON_DAYS
   )
 
-  resp <- tryCatch(GET(url), error = function(e) NULL)
-  if (is.null(resp) || status_code(resp) != 200) {
-    return(list(type = "error", message = "Could not reach Open-Meteo forecast service."))
+  # Render services can share outbound IP addresses. If another tenant using
+  # the same IP causes a temporary rate-limit or gateway error, retry briefly
+  # and identify this research application instead of sending a generic
+  # libcurl request.
+  request_error <- NULL
+  resp <- tryCatch(
+    RETRY(
+      "GET",
+      url,
+      user_agent("AI4RPT/1.0 (public research prototype)"),
+      timeout(20),
+      times = 3,
+      pause_base = 1,
+      pause_cap = 5,
+      terminate_on = c(400, 401, 403, 404)
+    ),
+    error = function(e) {
+      request_error <<- conditionMessage(e)
+      NULL
+    }
+  )
+
+  if (is.null(resp)) {
+    return(list(
+      type = "error",
+      message = paste0(
+        "Open-Meteo connection failed after retries. ",
+        if (!is.null(request_error)) request_error else "No response was received."
+      )
+    ))
+  }
+
+  if (status_code(resp) != 200) {
+    upstream_body <- tryCatch(
+      content(resp, "text", encoding = "UTF-8"),
+      error = function(e) ""
+    )
+    upstream_body <- trimws(substr(upstream_body, 1, 300))
+    return(list(
+      type = "error",
+      upstream_status = status_code(resp),
+      message = paste0(
+        "Open-Meteo forecast temporarily unavailable (HTTP ",
+        status_code(resp), ").",
+        if (upstream_body != "") paste0(" Provider response: ", upstream_body) else ""
+      )
+    ))
   }
 
   data <- fromJSON(content(resp, "text", encoding = "UTF-8"))
