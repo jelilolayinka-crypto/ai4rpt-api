@@ -178,12 +178,21 @@ function(state, lga, crop, year = as.character(format(Sys.Date(), "%Y")), lang =
   if (!is.null(BASELINE_WINDOWS) && nrow(baseline_row) == 1) {
     sd_onset <- round(baseline_row$sd_onset_doy[1])
     sd_cessation <- round(baseline_row$sd_cessation_doy[1])
+    n_years <- baseline_row$n_years_used[1]
     if (!is.na(sd_onset) && !is.na(sd_cessation)) {
-      variability_note <- paste0(
-        "Over the last ", baseline_row$n_years_used[1], " years, onset for this location has varied by about ",
-        sd_onset, " days and cessation by about ", sd_cessation,
-        " days year to year — build some flexibility into planting and harvest timing rather than treating these dates as fixed."
-      )
+      variability_note <- if (lang == "fr") {
+        paste0(
+          "Au cours des ", n_years, " dernières années, le début des pluies pour ce lieu a varié d'environ ",
+          sd_onset, " jours et la cessation d'environ ", sd_cessation,
+          " jours d'une année à l'autre — prévoyez une certaine flexibilité dans le calendrier de plantation et de récolte plutôt que de considérer ces dates comme fixes."
+        )
+      } else {
+        paste0(
+          "Over the last ", n_years, " years, onset for this location has varied by about ",
+          sd_onset, " days and cessation by about ", sd_cessation,
+          " days year to year — build some flexibility into planting and harvest timing rather than treating these dates as fixed."
+        )
+      }
     }
   }
 
