@@ -158,15 +158,24 @@ function(state, lga, crop, year = as.character(format(Sys.Date(), "%Y")), lang =
     }
   }
 
-  condition <- classify_condition(
+  # classify_condition() returns a list: the condition label plus the observed
+  # dry-day count (NA unless the condition is dry_spell). Unpack both so the
+  # real dry-day count reaches the confidence tier and the API response.
+  classified <- classify_condition(
     rainfall_df = rainfall,
     onset_date = onset,
     cessation_date = if (is.na(cessation)) as.Date(paste0(year, "-12-31")) else cessation,
     reference_date = Sys.Date(),
     normal_onset_window = normal_window
   )
+  condition <- classified$condition
+  dry_days_observed <- classified$dry_days
 
-  advisory <- get_advisory(crop = crop, condition = condition, language = lang)
+  advisory <- get_advisory(
+    crop = crop, condition = condition,
+    dry_days_observed = if (is.na(dry_days_observed)) NULL else dry_days_observed,
+    language = lang
+  )
 
   # Season-long variability note — built entirely from the baseline stats
   # we already have (no new data pull needed). This is a general risk
@@ -221,6 +230,7 @@ function(state, lga, crop, year = as.character(format(Sys.Date(), "%Y")), lang =
     season_length_days = if (is.na(cessation)) NA else as.integer(cessation - onset),
     estimated_season_length_days = if (is.na(estimated_season_length)) NA else estimated_season_length,
     condition = condition,
+    dry_days_observed = if (is.na(dry_days_observed)) NA else as.integer(dry_days_observed),
     condition_label = advisory$condition_label,
     confidence = advisory$confidence,
     language = advisory$language,

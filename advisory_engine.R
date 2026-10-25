@@ -211,14 +211,14 @@ classify_condition <- function(rainfall_df, onset_date, cessation_date,
   # Reference date after cessation -> season-end condition
   if (reference_date >= cessation_date) {
     is_early <- cessation_date < as.Date(paste0(format(cessation_date, "%Y"), "-10-01"))
-    return(if (is_early) "early_cessation" else "normal_cessation")
+    return(list(condition = if (is_early) "early_cessation" else "normal_cessation", dry_days = NA_integer_))
   }
 
   # Reference date before/at onset -> onset condition
   if (reference_date <= onset_date) {
-    if (onset_date < normal_onset_window$earliest_normal) return("early_onset")
-    if (onset_date > normal_onset_window$latest_normal) return("delayed_onset")
-    return("normal_onset")
+    if (onset_date < normal_onset_window$earliest_normal) return(list(condition = "early_onset", dry_days = NA_integer_))
+    if (onset_date > normal_onset_window$latest_normal) return(list(condition = "delayed_onset", dry_days = NA_integer_))
+    return(list(condition = "normal_onset", dry_days = NA_integer_))
   }
 
   # In-season -> check for excess rainfall first (more urgent/actionable
@@ -228,7 +228,7 @@ classify_condition <- function(rainfall_df, onset_date, cessation_date,
   excess_sum <- sum(excess_window$rain_mm, na.rm = TRUE)
 
   if (excess_sum >= EXCESS_RAIN_THRESHOLD_MM) {
-    return("excess_rainfall")
+    return(list(condition = "excess_rainfall", dry_days = NA_integer_))
   }
 
   # Then check for current dry spell around reference_date
@@ -252,10 +252,10 @@ classify_condition <- function(rainfall_df, onset_date, cessation_date,
   }
 
   if (recent_dry_run >= (DRY_SPELL_LENGTH_DAYS * 0.6)) {
-    return("dry_spell")
+    return(list(condition = "dry_spell", dry_days = recent_dry_run))
   }
 
-  "normal_onset"  # in-season, no flagged condition
+  list(condition = "normal_onset", dry_days = NA_integer_)  # in-season, no flagged condition
 }
 
 # ---------------------------------------------------------------------------
@@ -270,6 +270,8 @@ classify_condition <- function(rainfall_df, onset_date, cessation_date,
 # onset <- find_onset(rainfall)
 # cessation <- find_cessation(rainfall, onset)
 #
-# condition <- classify_condition(rainfall, onset, cessation, reference_date = Sys.Date())
-# advisory <- get_advisory(crop = "maize", condition = condition, dry_days_observed = 7)
+# classified <- classify_condition(rainfall, onset, cessation, reference_date = Sys.Date())
+# # classify_condition() returns list(condition = ..., dry_days = ...)
+# advisory <- get_advisory(crop = "maize", condition = classified$condition,
+#                          dry_days_observed = if (is.na(classified$dry_days)) NULL else classified$dry_days)
 # print(advisory)
